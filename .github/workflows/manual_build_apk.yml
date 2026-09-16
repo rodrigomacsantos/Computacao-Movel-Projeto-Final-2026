@@ -1,0 +1,61 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types: [ build-apk ]
+
+permissions:
+  contents: write
+  checks: write
+  actions: read
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: ./.github/actions/setup_flutter
+
+      - name: Generate APK name
+        run: |
+          if [ ! -f AUTHORS.txt ]; then
+            echo "AUTHORS.txt não encontrado!"
+            exit 1
+          fi
+
+          IDS=$(cut -d';' -f1 AUTHORS.txt | paste -sd "-" -)
+
+          if [ -z "$IDS" ]; then
+            echo "Não consegui obter o(s) número(s) de aluno do ficheiro AUTHORS.txt"
+            exit 1
+          fi
+
+          echo "APK_NAME=$IDS" >> $GITHUB_ENV
+          echo "BUILD_DATE=$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_ENV
+
+      - name: Build APK
+        run: flutter build apk --debug
+
+      - name: Rename APK
+        run: |
+          mv build/app/outputs/flutter-apk/app-debug.apk \
+            build/app/outputs/flutter-apk/${APK_NAME}.apk
+
+      - name: Upload APK to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.APK_NAME }}
+          release_name: ${{ env.APK_NAME }}
+          files: build/app/outputs/flutter-apk/${{ env.APK_NAME }}.apk
+          body: ${{ env.BUILD_DATE }}
+          draft: false
+          prerelease: false
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

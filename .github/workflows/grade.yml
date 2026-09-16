@@ -1,0 +1,109 @@
+name: Grade
+
+on:
+  workflow_dispatch:
+  push:
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+    branches:
+      - main
+
+permissions:
+  contents: write
+  checks: write
+  actions: read
+
+jobs:
+  check-deadline:
+    name: Check Deadline
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check deadline
+        run: |
+          if [ -z "$DEADLINE" ]; then
+            echo "❌ DEADLINE não definida."
+            echo "Formato esperado: YYYY-MM-DD HH:MM:SS (ex: 2026-05-10 23:59:59)"
+            exit 1
+          fi
+          
+          NOW=$(date -u +%s)
+          DEADLINE_TS=$(date -d "$DEADLINE" +%s)
+
+          if [ "$NOW" -gt "$DEADLINE_TS" ]; then
+            echo "❌ O prazo para submissão deste trabalho já passou $DEADLINE ❌"
+            exit 1
+          fi
+    env:
+      DEADLINE: ${{vars.PROJECT_DEADLINE}}
+
+  check-tests-integrity:
+    name: Check Tests Integrity
+    runs-on: ubuntu-latest
+    needs: check-deadline
+    outputs:
+      optional_tests_exists: ${{ steps.optional.outputs.optional_tests_exists }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Validate GHA
+        run: |
+          GENERATED_HASH=$(find .github -type f -name "*.yml" -print0 \
+            | sort -z \
+            | xargs -0 sha256sum \
+            | sha256sum \
+            | awk '{ print $1 }')
+
+          if [ "$GENERATED_HASH" != "$EXPECTED_GHA_HASH" ]; then
+            echo "GENERATED_HASH: $GENERATED_HASH"
+            echo "🚨🚓 Não deves modificar os ficheiros do GitHub Actions, se não foram modificados contacta o professor 🚨🚓"
+            exit 1
+          fi
+
+      - name: Validate teacher tests hash
+        run: |
+          GENERATED_HASH=$(find test/teacher -type f -name "*.dart" -print0 \
+            | sort -z \
+            | xargs -0 sha256sum \
+            | sha256sum \
+            | awk '{ print $1 }')
+
+          if [ "$GENERATED_HASH" != "$EXPECTED_TESTS_HASH" ]; then
+            echo "GENERATED_HASH: $GENERATED_HASH"
+            echo "🚨🚓 Não deves modificar os testes, se não foram modificados contacta o professor 🚨🚓"
+            exit 1
+          fi
+
+      - name: Check if optional tests exist
+        id: optional
+        run: |
+          if [ -f test/teacher/tests/widget_teacher_optional_test.dart ]; then
+            echo "optional_tests_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "optional_tests_exists=false" >> $GITHUB_OUTPUT
+          fi
+    env:
+      EXPECTED_GHA_HASH: ${{ secrets.PROJECT_GHA_HASH }}
+      EXPECTED_TESTS_HASH: ${{ secrets.PROJECT_TESTS_HASH }}
+
+  mandatory-tests:
+    name: Mandatory Tests
+    uses: ./.github/workflows/mandatory_tests.yml
+    needs: check-tests-integrity
+    secrets: inherit
+    with:
+      spreadsheet_id: ${{ vars.SPREADSHEET_ID }}
+      authors_amount: ${{ vars.PROJECT_AUTHORS_AMOUNT }}
+      worksheet_name: ${{ vars.PROJECT_WORKSHEET }}
+
+  optional-tests:
+    name: Optional Tests
+    needs: check-tests-integrity
+    if: ${{ needs.check-tests-integrity.outputs.optional_tests_exists == 'true' }}
+    uses: ./.github/workflows/optional_tests.yml
+    secrets: inherit
+    with:
+      spreadsheet_id: ${{ vars.SPREADSHEET_ID }}
+      authors_amount: ${{ vars.PROJECT_AUTHORS_AMOUNT }}
+      worksheet_name: ${{ vars.PROJECT_WORKSHEET }}
